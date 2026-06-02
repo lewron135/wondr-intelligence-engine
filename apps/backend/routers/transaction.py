@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.transaction import Transaction
 from pydantic import BaseModel
-# IMPORT SERVICE ML YANG BARUSAN KITA BIKIN
 from services.anomaly_detector import AnomalyDetectorService
+# 1. IMPORT SERVICE PROPHET BARU LU
+from services.bill_forecaster import BillForecasterService
 
 router = APIRouter(
     prefix="/transactions",
@@ -20,10 +21,10 @@ class TransactionCreate(BaseModel):
 @router.post("/")
 def create_transaction(
     transaction: TransactionCreate, 
-    background_tasks: BackgroundTasks, # Kita panggil fitur BackgroundTasks bawaan FastAPI
+    background_tasks: BackgroundTasks, 
     db: Session = Depends(get_db)
 ):
-    # 1. Simpan transaksi baru ke SQLite
+    # Simpan transaksi ke SQLite
     db_transaction = Transaction(
         user_id=transaction.user_id,
         amount=transaction.amount,
@@ -34,23 +35,30 @@ def create_transaction(
     db.commit()
     db.refresh(db_transaction)
     
-    # 2. FITUR SE SAKTI: Picu model ML Isolation Forest untuk jalan di latar belakang (Async)
-    # Browser / Next.js gak bakal nungguin proses hitung ML-nya selesai, jadi aplikasi tetep kerasa instan!
+    # 2. Picu Anomaly Detector (Jalan terus untuk semua kategori)
     background_tasks.add_task(
         AnomalyDetectorService.analyze_user_spending, 
         transaction.user_id, 
         db
     )
     
+    # 3. JIKA KATEGORINYA ADALAH TAGIHAN, Picu Pipa Peramalan Prophet secara Async!
+    if transaction.category in ['bills', 'utilities']:
+        background_tasks.add_task(
+            BillForecasterService.forecast_upcoming_bills,
+            transaction.user_id,
+            db
+        )
+    
     return {
         "status": "success",
-        "message": "Transaction recorded. ML Intelligence pipeline triggered in background.",
+        "message": "Transaction recorded. AI Intelligence pipelines triggered in background.",
         "data": {
             "id": db_transaction.id,
             "user_id": db_transaction.user_id,
             "amount": db_transaction.amount,
-            "category": db_transaction.category,
+            "category": transaction.category,
             "merchant_name": db_transaction.merchant_name,
             "timestamp": db_transaction.timestamp
         }
-    }  
+    }
