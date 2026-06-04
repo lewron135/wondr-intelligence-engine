@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models.insight import Insight
+from services.recommendation import RecommendationService
 
 router = APIRouter(
     prefix="/insights",
@@ -10,6 +11,8 @@ router = APIRouter(
 
 @router.get("/{user_id}")
 def get_user_insights(user_id: str, db: Session = Depends(get_db)):
+    RecommendationService.generate_recommendations(user_id, db)
+
     # Mengambil semua baris insight milik user_id tertentu dari DB
     insights = db.query(Insight).filter(Insight.user_id == user_id).all()
     
