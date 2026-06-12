@@ -10,15 +10,26 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+env/
+wondr-env/
 ENV/
 
 # Environment Variables & Databases
 .env
 .env.local
+*.env
 *.db
 *.sqlite
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Bank statement PDFs — must never be committed
+MutasiBCA*.pdf
+*.pdf
 
 # IDE
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db

@@ -1,83 +1,142 @@
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sqlalchemy.orm import Session
+
 from models.transaction import Transaction
 from models.insight import Insight
-from models.recommendation import GrowthRecommendation
+
+
+def _fmt_rupiah(amount: float) -> str:
+    """Format as Indonesian Rupiah: Rp 1.500.000"""
+    return "Rp " + f"{int(amount):,}".replace(",", ".")
+
+
+# Per-category: (label used in sentence, punchy closing nudge)
+_CATEGORY_COPY: dict[str, tuple[str, str]] = {
+    "food_and_beverage": (
+        "makan & minum",
+        "Kalap kuliner bisa bikin kantong jebol pelan-pelan — kendalikan sebelum makin bocor!",
+    ),
+    "groceries": (
+        "belanja kebutuhan dapur",
+        "Beli sesuai list, jangan tergoda lorong diskon — hati-hati bocor halus!",
+    ),
+    "shopping": (
+        "belanja online/offline",
+        "Flash sale itu jebakan batman — hati-hati bocor halus minggu ini!",
+    ),
+    "transfer_investment": (
+        "transfer & pembayaran",
+        "Pastikan setiap rupiah betul-betul dikirim ke tempat yang produktif ya!",
+    ),
+    "transport": (
+        "transportasi",
+        "Ongkos segitu besar — pertimbangkan alternatif yang lebih hemat sebelum makin nguras!",
+    ),
+    "utilities": (
+        "tagihan utilitas",
+        "Cek ulang paket internet & listrikmu — mungkin ada yang bisa dipangkas bulan ini!",
+    ),
+    "lifestyle": (
+        "hiburan & lifestyle",
+        "Hiburan oke, tapi jangan sampai ngalahin target nabungmu — prioritas dulu!",
+    ),
+    "healthcare": (
+        "kesehatan",
+        "Kesehatan nomor satu, tapi tetap pantau angkanya biar gak kaget di akhir bulan!",
+    ),
+    "travel": (
+        "travel & wisata",
+        "Liburan impian boleh, asal sudah dianggarkan dari awal — bukan impulsif!",
+    ),
+    "uncategorized": (
+        "tak terduga",
+        "Ada pengeluaran di luar kebiasaan yang perlu kamu cermatin lebih lanjut!",
+    ),
+}
+_DEFAULT_COPY = ("pengeluaran", "Hati-hati bocor halus minggu ini!")
+
 
 class AnomalyDetectorService:
     @staticmethod
     def analyze_user_spending(user_id: str, db: Session):
-        # 1. Ambil semua histori transaksi user ini dari database SQLite
-        transactions = db.query(Transaction).filter(Transaction.user_id == user_id).all()
-        
-        # Bisnis logik keamanan: Model ML butuh minimal data buat belajar.
-        # Kalau transaksi kurang dari 3, kita skip dulu biar gak ngaco statistiknya.
+        transactions = (
+            db.query(Transaction).filter(Transaction.user_id == user_id).all()
+        )
+
+        # IsolationForest needs at least 3 data points to produce meaningful scores.
         if len(transactions) < 3:
             return None
 
-        # 2. Convert data transaksi dari DB menjadi Pandas DataFrame agar bisa dibaca Scikit-Learn
-        data = [{
-            "id": t.id,
-            "amount": t.amount,
-            "category": t.category,
-            "merchant_name": t.merchant_name
-        } for t in transactions]
-        
+        data = [
+            {
+                "id": t.id,
+                "amount": t.amount,
+                "category": t.category,
+                "merchant_name": t.merchant_name,
+            }
+            for t in transactions
+        ]
         df = pd.DataFrame(data)
 
-        # 3. Inisialisasi & Fit Model Isolation Forest
-        # contamination=0.15 artinya kita memprediksi sekitar 15% dari total transaksi adalah anomali (bocor)
+        # contamination=0.15 → we expect ~15% of transactions to be outliers.
         model = IsolationForest(contamination=0.15, random_state=42)
-        
-        # Kita latih model berdasarkan fitur 'amount' (nominal uang)
-        df['anomaly_score'] = model.fit_predict(df[['amount']])
-        
-        # Catatan Isolation Forest: 
-        # Score  1 = Transaksi Normal / Wajar
-        # Score -1 = Transaksi Anomali / Lonjakan Pengeluaran (Outlier)
-        anomalies = df[df['anomaly_score'] == -1]
+        df["anomaly_score"] = model.fit_predict(df[["amount"]])
+        # IsolationForest: 1 = normal, -1 = anomaly (outlier / spending spike)
+        anomalies = df[df["anomaly_score"] == -1]
 
-        # 4. Jika ditemukan transaksi anomali, buatkan Insight dan Growth Recommendation secara otomatis
         if not anomalies.empty:
-            # Ambil transaksi anomali yang paling parah nominalnya
-            worst_anomaly = anomalies.sort_values(by='amount', ascending=False).iloc[0]
-            
-            # Cek apakah insight serupa sudah pernah dibuat biar gak duplikat di DB
-            existing_insight = db.query(Insight).filter(
-                Insight.user_id == user_id, 
-                Insight.category == worst_anomaly['category']
-            ).first()
+            normal_df = df[df["anomaly_score"] == 1]
+            normal_mean = normal_df["amount"].mean() if not normal_df.empty else None
+            anomaly_count = len(anomalies)
+            worst = anomalies.sort_values(by="amount", ascending=False).iloc[0]
 
-            if not existing_insight:
-                # Bikin pesan narasi humanis ala aplikasi perbankan modern
-                msg = f"Waduh! Pengeluaran kamu di kategori {worst_anomaly['category']} melonjak tajam nih. Terakhir tercatat Rp {worst_anomaly['amount']:,} di {worst_anomaly['merchant_name']}."
-                
-                # Masukkan ke tabel Insights
-                new_insight = Insight(
-                    user_id=user_id,
-                    type="spending_anomaly",
-                    category=worst_anomaly['category'],
-                    message=msg,
-                    anomaly_score=float(worst_anomaly['amount'])
+            existing = (
+                db.query(Insight)
+                .filter(
+                    Insight.user_id == user_id,
+                    Insight.category == worst["category"],
                 )
-                db.add(new_insight)
+                .first()
+            )
 
-                # Pasangkan dengan Rule Engine sederhana untuk dimensi Growth!
-                # Kita sarankan user menghemat dan mengalihkan 20% dari dana bocor itu ke investasi goal-nya
-                redirect_target = float(worst_anomaly['amount'] * 0.20)
-                
-                new_growth = GrowthRecommendation(
-                    user_id=user_id,
-                    target_goal="Tabungan Masa Depan",
-                    current_balance=50000.0, # saldo dummy awal investasi
-                    target_amount=1000000.0,
-                    recommended_redirect_amount=redirect_target,
-                    impact_message=f"Bocoran dana terdeteksi! Kalau kamu amankan Rp {redirect_target:,} dari pos {worst_anomaly['category']} ini ke investasi, impian finansialmu bisa tercapai lebih cepat!"
+            if not existing:
+                label, nudge = _CATEGORY_COPY.get(worst["category"], _DEFAULT_COPY)
+
+                # Build "X× lebih besar dari rata-rata" suffix when ratio is meaningful.
+                ratio_str = ""
+                if normal_mean and normal_mean > 0:
+                    ratio = worst["amount"] / normal_mean
+                    if ratio >= 1.5:
+                        ratio_str = f" — {ratio:.1f}× lebih besar dari rata-ratamu"
+
+                count_str = (
+                    f" ({anomaly_count} transaksi mencurigakan terdeteksi bulan ini)"
+                    if anomaly_count > 1
+                    else ""
                 )
-                db.add(new_growth)
-                
+
+                msg = (
+                    f"⚠️ Pengeluaran {label} kamu melonjak tajam hingga "
+                    f"{_fmt_rupiah(worst['amount'])}{ratio_str}! "
+                    f"Transaksi di '{worst['merchant_name']}' terdeteksi sebagai "
+                    f"anomali{count_str}. {nudge}"
+                )
+
+                db.add(
+                    Insight(
+                        user_id=user_id,
+                        type="spending_anomaly",
+                        category=worst["category"],
+                        message=msg,
+                        anomaly_score=float(worst["amount"]),
+                    )
+                )
                 db.commit()
-                return {"status": "analyzed", "anomaly_found": True, "merchant": worst_anomaly['merchant_name']}
-                
+                return {
+                    "status": "analyzed",
+                    "anomaly_found": True,
+                    "merchant": worst["merchant_name"],
+                }
+
         return {"status": "analyzed", "anomaly_found": False}

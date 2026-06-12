@@ -7,7 +7,9 @@ from models.insight import Insight
 from models.recommendation import GrowthRecommendation
 
 # 2. Import semua Routers yang baru saja kita buat
-from routers import transaction, insight, recommendation
+from routers import transaction, insight, recommendation, users
+
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="wondr Intelligence Engine",
@@ -21,6 +23,7 @@ Base.metadata.create_all(bind=engine)
 app.include_router(transaction.router)
 app.include_router(insight.router)
 app.include_router(recommendation.router)
+app.include_router(users.router)
 
 @app.get("/")
 def read_root():
@@ -28,3 +31,11 @@ def read_root():
         "status": "active",
         "message": "wondr Intelligence Engine Backend API is running smoothly"
     }
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Mengizinkan semua domain (termasuk Flutter localhost nanti)
+    allow_credentials=True,
+    allow_methods=["*"],  # Mengizinkan semua HTTP Methods (GET, POST, PUT, DELETE)
+    allow_headers=["*"],  # Mengizinkan semua HTTP Headers
+)
