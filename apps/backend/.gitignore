@@ -1,0 +1,28 @@
+# apps/backend — local development artifacts
+# (root .gitignore already covers most of these; this file adds a second layer)
+
+# Project virtualenv
+wondr-env/
+
+# SQLite dev database — NEVER commit real transaction data
+wondr_local.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Test & temporary files — includes any bank statements dropped here for testing
+*.pdf
+*.jpg
+*.jpeg
+*.png

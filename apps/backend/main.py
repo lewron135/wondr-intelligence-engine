@@ -5,9 +5,12 @@ from database import engine, Base
 from models.transaction import Transaction
 from models.insight import Insight
 from models.recommendation import GrowthRecommendation
+from models.portfolio import UserPortfolio, PortfolioHolding  # noqa: F401
 
 # 2. Import semua Routers yang baru saja kita buat
 from routers import transaction, insight, recommendation, users
+from routers import market
+from routers import portfolio
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,6 +27,8 @@ app.include_router(transaction.router)
 app.include_router(insight.router)
 app.include_router(recommendation.router)
 app.include_router(users.router)
+app.include_router(market.router)
+app.include_router(portfolio.router)
 
 @app.get("/")
 def read_root():
