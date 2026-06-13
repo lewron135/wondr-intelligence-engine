@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🏦 wondr Intelligence Engine
+# Financial Intelligence Engine
 
 ### Wealth Management & Market Intelligence OS
 
