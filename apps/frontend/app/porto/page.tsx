@@ -38,7 +38,10 @@ import {
   Pencil,
   Save,
   X,
+  Sparkles,
+  Search,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 import { WATCHLIST } from "@/constants/watchlist";
 import { calcSMA, calcRSI, calcMACD } from "@/lib/market/indicators";
@@ -217,9 +220,11 @@ function SignalIcon({ type }: { type: "bullish" | "bearish" | "neutral" }) {
 function WatchlistTab({
   rows,
   onViewChart,
+  onAnalyze,
 }: {
   rows: RowData[];
   onViewChart: (symbol: string) => void;
+  onAnalyze: (symbol: string) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -328,13 +333,22 @@ function WatchlistTab({
                   )}
                 </td>
                 <td className="px-5 py-4 text-center">
-                  <button
-                    onClick={() => onViewChart(row.symbol)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
-                  >
-                    <Activity className="w-3 h-3" />
-                    Chart
-                  </button>
+                  <div className="flex items-center justify-center gap-2">
+                    <button
+                      onClick={() => onViewChart(row.symbol)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                    >
+                      <Activity className="w-3 h-3" />
+                      Chart
+                    </button>
+                    <button
+                      onClick={() => onAnalyze(row.symbol)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 rounded-lg transition-colors"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      Analyze
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -506,6 +520,7 @@ function ChartTab({
   chartRange,
   onRangeChange,
   loading,
+  onAnalyze,
 }: {
   rows: RowData[];
   selectedSymbol: string;
@@ -516,6 +531,7 @@ function ChartTab({
   chartRange: string;
   onRangeChange: (r: string) => void;
   loading: boolean;
+  onAnalyze: (symbol: string) => void;
 }) {
   const currency = meta?.currency ?? "USD";
   const tickEvery = Math.max(1, Math.floor(chartData.length / 7));
@@ -548,20 +564,29 @@ function ChartTab({
               </button>
             ))}
           </div>
-          <div className="flex gap-1">
-            {RANGES.map((r) => (
-              <button
-                key={r.value}
-                onClick={() => onRangeChange(r.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  chartRange === r.value
-                    ? "bg-indigo-600 text-white"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1">
+              {RANGES.map((r) => (
+                <button
+                  key={r.value}
+                  onClick={() => onRangeChange(r.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    chartRange === r.value
+                      ? "bg-indigo-600 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => onAnalyze(selectedSymbol)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+            >
+              <Sparkles className="w-3 h-3" />
+              Analyze Further
+            </button>
           </div>
         </div>
 
@@ -836,20 +861,26 @@ function MyHoldingsTab({
     const currentPrice = row?.meta?.regularMarketPrice ?? null;
     const currency = row?.meta?.currency ?? "USD";
     const region = row?.region ?? ("US" as const);
+
+    // ID: quantity is stored as lots (1 lot = 100 shares)
+    const totalShares = region === "ID" ? h.quantity * 100 : h.quantity;
+    const cost = h.averagePrice * totalShares;
+
     const pnlPct =
       currentPrice !== null
         ? ((currentPrice - h.averagePrice) / h.averagePrice) * 100
         : null;
-    const marketValue = currentPrice !== null ? currentPrice * h.quantity : null;
-    const pnlAbs = marketValue !== null ? marketValue - h.averagePrice * h.quantity : null;
+    const marketValue = currentPrice !== null ? currentPrice * totalShares : null;
+    const pnlAbs = marketValue !== null ? marketValue - cost : null;
 
-    // Personalized recommendation (needs chartData from the watchlist row)
+    // Personalized recommendation — always pass totalShares so the scoring
+    // engine works in shares regardless of market convention
     let personalRec: Analysis | null = null;
     if (row?.chartData.length && row?.meta) {
       personalRec = generateAnalysis(
         row.chartData,
         row.meta,
-        { averagePrice: h.averagePrice, quantity: h.quantity },
+        { averagePrice: h.averagePrice, quantity: totalShares },
         portfolio.cashBalance
       );
     }
@@ -859,6 +890,8 @@ function MyHoldingsTab({
       currentPrice,
       currency,
       region,
+      totalShares,
+      cost,
       pnlPct,
       marketValue,
       pnlAbs,
@@ -866,28 +899,39 @@ function MyHoldingsTab({
     };
   });
 
-  // ── Portfolio summary metrics ─────────────────────────────────────────────
-  const totalMarketValue = enriched.reduce((s, h) => s + (h.marketValue ?? 0), 0);
-  const totalCost = portfolio.holdings.reduce((s, h) => s + h.averagePrice * h.quantity, 0);
-  const totalAssets = portfolio.cashBalance + totalMarketValue;
-  const totalPnL = totalMarketValue > 0 ? totalMarketValue - totalCost : 0;
-  const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
+  // ── Portfolio summary metrics (split by currency) ────────────────────────
+  const idrHoldings = enriched.filter((h) => h.currency === "IDR");
+  const usdHoldings = enriched.filter((h) => h.currency === "USD");
 
-  // Detect mixed currencies (for the summary note)
-  const hasMixedCurrency =
-    enriched.some((h) => h.currency === "IDR") &&
-    enriched.some((h) => h.currency === "USD");
+  const idrMarketValue = idrHoldings.reduce((s, h) => s + (h.marketValue ?? 0), 0);
+  const idrCost = idrHoldings.reduce((s, h) => s + h.cost, 0);
+  const idrPnL = idrCost > 0 ? idrMarketValue - idrCost : 0;
+  const idrPnLPct = idrCost > 0 ? (idrPnL / idrCost) * 100 : 0;
+
+  const usdMarketValue = usdHoldings.reduce((s, h) => s + (h.marketValue ?? 0), 0);
+  const usdCost = usdHoldings.reduce((s, h) => s + h.cost, 0);
+  const usdPnL = usdCost > 0 ? usdMarketValue - usdCost : 0;
+  const usdPnLPct = usdCost > 0 ? (usdPnL / usdCost) * 100 : 0;
+
+  const hasIDR = idrHoldings.length > 0;
+  const hasUSD = usdHoldings.length > 0;
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   async function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError("");
     const avgPrice = parseFloat(formAvgPrice);
-    const qty = parseFloat(formQty);
-    if (isNaN(avgPrice) || avgPrice <= 0 || isNaN(qty) || qty <= 0) {
-      setFormError("Average price and quantity must be positive numbers.");
+    const rawInput = parseFloat(formQty);
+    if (isNaN(avgPrice) || avgPrice <= 0 || isNaN(rawInput) || rawInput <= 0) {
+      setFormError(
+        isIDMarket
+          ? "Average price and quantity must be positive numbers."
+          : "Average price and total invested amount must be positive numbers."
+      );
       return;
     }
+    // For US fractional shares: derive quantity from totalInvested / avgPrice
+    const qty = isIDMarket ? rawInput : rawInput / avgPrice;
     setFormSaving(true);
     try {
       await onSaveHolding(formSymbol, avgPrice, qty);
@@ -921,59 +965,91 @@ function MyHoldingsTab({
   }
 
   const formRow = watchlistRows.find((r) => r.symbol === formSymbol);
+  const formEntry = WATCHLIST.find((w) => w.symbol === formSymbol);
+  const isIDMarket = formEntry?.region === "ID";
+
+  const _formQtyNum = parseFloat(formQty) || 0;
+  const _formAvgPriceNum = parseFloat(formAvgPrice) || 0;
+  // For US stocks, formQty represents totalInvested; derive shares from totalInvested / avgPrice
+  const _formTotalShares = isIDMarket
+    ? _formQtyNum * 100
+    : _formAvgPriceNum > 0 ? _formQtyNum / _formAvgPriceNum : 0;
+  const _formPreviewValue =
+    formRow?.meta?.regularMarketPrice != null && _formTotalShares > 0
+      ? formRow.meta.regularMarketPrice * _formTotalShares
+      : null;
 
   return (
     <div className="space-y-6">
       {/* ── Summary cards ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Total Assets */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
-            Est. Total Assets
-          </p>
-          <p className="text-2xl font-black text-gray-900 leading-none">
-            {totalMarketValue > 0
-              ? totalAssets.toLocaleString(undefined, { maximumFractionDigits: 0 })
-              : portfolio.cashBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </p>
-          {hasMixedCurrency && (
-            <p className="text-[10px] text-amber-500 mt-1">Mixed currencies — not directly comparable</p>
-          )}
-          <p className="text-xs text-gray-400 mt-1">
-            Cash + {enriched.length} holding{enriched.length !== 1 ? "s" : ""}
-          </p>
-        </div>
-
-        {/* Total Return */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
-            Unrealized P&amp;L
-          </p>
-          {totalMarketValue > 0 ? (
-            <>
-              <p
-                className={`text-2xl font-black leading-none ${
-                  totalPnL >= 0 ? "text-emerald-600" : "text-red-500"
-                }`}
-              >
-                {totalPnL >= 0 ? "+" : ""}
-                {totalPnL.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+      <div
+        className={`grid grid-cols-1 gap-4 ${
+          hasIDR && hasUSD
+            ? "sm:grid-cols-3"
+            : hasIDR || hasUSD
+            ? "sm:grid-cols-2"
+            : "sm:grid-cols-1"
+        }`}
+      >
+        {/* IDR portfolio card */}
+        {hasIDR && (
+          <div className="bg-white rounded-2xl border border-red-100 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[9px] font-bold bg-red-50 text-red-600 px-1.5 py-0.5 rounded-full">
+                IDR
+              </span>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+                Total Aset IDR
               </p>
-              <p
-                className={`text-sm font-semibold mt-1 ${
-                  totalPnLPct >= 0 ? "text-emerald-600" : "text-red-500"
-                }`}
-              >
-                {totalPnLPct >= 0 ? "+" : ""}
-                {totalPnLPct.toFixed(2)}%
-              </p>
-            </>
-          ) : (
-            <p className="text-2xl font-black text-gray-300 leading-none">—</p>
-          )}
-        </div>
+            </div>
+            <p className="text-2xl font-black text-gray-900 leading-none">
+              Rp {idrMarketValue.toLocaleString("id-ID", { maximumFractionDigits: 0 })}
+            </p>
+            <p
+              className={`text-sm font-semibold mt-1 ${
+                idrPnL >= 0 ? "text-emerald-600" : "text-red-500"
+              }`}
+            >
+              {idrPnL >= 0 ? "+" : ""}
+              Rp {Math.abs(idrPnL).toLocaleString("id-ID", { maximumFractionDigits: 0 })}
+              {" "}({idrPnLPct >= 0 ? "+" : ""}{idrPnLPct.toFixed(2)}%)
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {idrHoldings.length} position{idrHoldings.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+        )}
 
-        {/* Cash Balance */}
+        {/* USD portfolio card */}
+        {hasUSD && (
+          <div className="bg-white rounded-2xl border border-blue-100 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[9px] font-bold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full">
+                USD
+              </span>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+                Total Assets USD
+              </p>
+            </div>
+            <p className="text-2xl font-black text-gray-900 leading-none">
+              ${usdMarketValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p
+              className={`text-sm font-semibold mt-1 ${
+                usdPnL >= 0 ? "text-emerald-600" : "text-red-500"
+              }`}
+            >
+              {usdPnL >= 0 ? "+" : ""}
+              ${Math.abs(usdPnL).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {" "}({usdPnLPct >= 0 ? "+" : ""}{usdPnLPct.toFixed(2)}%)
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {usdHoldings.length} position{usdHoldings.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+        )}
+
+        {/* Cash / Buying Power card */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
             Buying Power (Cash)
@@ -1061,13 +1137,13 @@ function MyHoldingsTab({
           {/* Average price */}
           <div>
             <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
-              Avg Price
+              {isIDMarket ? "Avg Price (IDR/share)" : "Avg Price (USD/share)"}
             </label>
             <input
               type="number"
               min={0}
               step="any"
-              placeholder="e.g. 9500"
+              placeholder={isIDMarket ? "e.g. 9500" : "e.g. 195.50"}
               value={formAvgPrice}
               onChange={(e) => setFormAvgPrice(e.target.value)}
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -1075,21 +1151,31 @@ function MyHoldingsTab({
             />
           </div>
 
-          {/* Quantity */}
+          {/* Quantity (ID) / Total Invested (US) */}
           <div>
             <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
-              Quantity
+              {isIDMarket ? "Quantity (Lots)" : "Total Invested (USD)"}
             </label>
             <input
               type="number"
               min={0}
-              step="any"
-              placeholder="e.g. 100"
+              step={isIDMarket ? "1" : "0.01"}
+              placeholder={isIDMarket ? "e.g. 5" : "e.g. 12.42"}
               value={formQty}
               onChange={(e) => setFormQty(e.target.value)}
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
               required
             />
+            {isIDMarket && _formQtyNum > 0 && (
+              <p className="text-[10px] text-gray-400 mt-1">
+                = {(_formQtyNum * 100).toLocaleString()} shares
+              </p>
+            )}
+            {!isIDMarket && _formQtyNum > 0 && _formAvgPriceNum > 0 && (
+              <p className="text-[10px] text-gray-400 mt-1">
+                = {(_formQtyNum / _formAvgPriceNum).toLocaleString(undefined, { maximumFractionDigits: 6 })} shares
+              </p>
+            )}
           </div>
 
           {/* Save button */}
@@ -1108,6 +1194,14 @@ function MyHoldingsTab({
             </button>
           </div>
         </form>
+        {_formPreviewValue !== null && (
+          <p className="mt-2 text-[11px] text-indigo-600 font-mono">
+            Preview:{" "}
+            {isIDMarket
+              ? `${_formQtyNum} lots × 100 shares × Rp ${fmtPrice(formRow!.meta!.regularMarketPrice, "IDR")} = Rp ${fmtPrice(_formPreviewValue, "IDR")}`
+              : `$${fmtPrice(_formQtyNum, "USD")} ÷ $${fmtPrice(_formAvgPriceNum, "USD")} avg = ${(_formQtyNum / _formAvgPriceNum).toLocaleString(undefined, { maximumFractionDigits: 6 })} sh · Current value: $${fmtPrice(_formPreviewValue, "USD")}`}
+          </p>
+        )}
         {formError && (
           <p className="mt-2 text-xs text-red-500 flex items-center gap-1">
             <AlertTriangle className="w-3 h-3" />
@@ -1139,14 +1233,14 @@ function MyHoldingsTab({
                 <tr className="bg-gray-50 border-b border-gray-100">
                   {[
                     "Symbol", "Avg Price", "Current Price",
-                    "Qty", "Market Value", "P&L", "Signal", "Action",
+                    "Qty / Invested", "Market Value", "P&L", "Signal", "Action",
                   ].map((h) => (
                     <th
                       key={h}
                       className={`px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider ${
                         ["Avg Price", "Current Price", "Market Value", "P&L"].includes(h)
                           ? "text-right"
-                          : ["Qty", "Signal", "Action"].includes(h)
+                          : ["Qty / Invested", "Signal", "Action"].includes(h)
                           ? "text-center"
                           : "text-left"
                       }`}
@@ -1200,11 +1294,27 @@ function MyHoldingsTab({
                         )}
                       </td>
 
-                      {/* Quantity */}
+                      {/* Quantity / Invested */}
                       <td className="px-4 py-4 text-center">
-                        <span className="font-mono text-gray-700">
-                          {h.quantity.toLocaleString()}
-                        </span>
+                        {h.region === "ID" ? (
+                          <div>
+                            <span className="font-mono font-semibold text-gray-900">
+                              {h.quantity.toLocaleString()} lot{h.quantity !== 1 ? "s" : ""}
+                            </span>
+                            <p className="text-[10px] text-gray-400">
+                              {h.totalShares.toLocaleString()} shares
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="font-mono font-semibold text-gray-900">
+                              ${fmtPrice(h.cost, h.currency)}
+                            </span>
+                            <p className="text-[10px] text-gray-400">
+                              {h.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} sh
+                            </p>
+                          </div>
+                        )}
                       </td>
 
                       {/* Market Value */}
@@ -1378,6 +1488,172 @@ function HowToReadTab() {
   );
 }
 
+// ─── Ticker Search Bar ─────────────────────────────────────────────────────
+
+function TickerSearchBar({ onAnalyze }: { onAnalyze: (symbol: string) => void }) {
+  const [query, setQuery] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const sym = query.trim().toUpperCase();
+    if (sym) {
+      onAnalyze(sym);
+      setQuery("");
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-4 py-2.5 shadow-sm focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all"
+    >
+      <Search className="w-4 h-4 text-gray-400 shrink-0" />
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search any ticker to analyze with AI… (e.g. AAPL, BBCA.JK)"
+        className="flex-1 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none font-mono"
+      />
+      <button
+        type="submit"
+        disabled={!query.trim()}
+        className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-100 disabled:text-gray-400 text-white text-xs font-semibold rounded-lg transition-colors"
+      >
+        <Sparkles className="w-3 h-3" />
+        Analyze
+      </button>
+    </form>
+  );
+}
+
+// ─── Analysis Modal ────────────────────────────────────────────────────────
+
+function AnalysisModal({
+  symbol,
+  onClose,
+}: {
+  symbol: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setText(null);
+    setError(null);
+    fetch(`${API_URL}/market/analyze/${encodeURIComponent(symbol)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then((d) => setText(d.analysis))
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [symbol]);
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-sm">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="font-black text-gray-900 tracking-tight">AI Analyst</p>
+              <p className="text-[10px] text-violet-500 font-semibold uppercase tracking-wide">
+                Gemini · {symbol}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-6 py-5">
+          {loading && (
+            <div className="flex flex-col items-center justify-center gap-4 py-16">
+              <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center">
+                <Sparkles className="w-6 h-6 text-violet-500 animate-pulse" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-semibold text-gray-700">Gemini AI is gathering data and analyzing the charts…</p>
+                <p className="text-xs text-gray-400 mt-1">Fetching live market data · Computing indicators · Generating analysis</p>
+              </div>
+              <RefreshCw className="w-4 h-4 text-violet-400 animate-spin" />
+            </div>
+          )}
+
+          {error && (
+            <div className="flex flex-col items-center gap-3 py-12">
+              <AlertTriangle className="w-8 h-8 text-red-400" />
+              <p className="text-sm font-semibold text-red-600">Analysis failed</p>
+              <p className="text-xs text-gray-500 text-center max-w-sm">{error}</p>
+              <p className="text-xs text-gray-400">Make sure the backend is running and the symbol is valid.</p>
+            </div>
+          )}
+
+          {text && (
+            <div className="prose-analysis">
+              <ReactMarkdown
+                components={{
+                  h1: ({ children }) => <h1 className="text-xl font-black text-gray-900 mt-0 mb-3">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-base font-bold text-gray-900 mt-5 mb-2 pb-1 border-b border-gray-100">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-sm font-bold text-gray-800 mt-4 mb-1.5">{children}</h3>,
+                  p: ({ children }) => <p className="text-sm text-gray-600 leading-relaxed mb-3">{children}</p>,
+                  ul: ({ children }) => <ul className="space-y-1 mb-3 pl-4">{children}</ul>,
+                  ol: ({ children }) => <ol className="space-y-1 mb-3 pl-4 list-decimal">{children}</ol>,
+                  li: ({ children }) => <li className="text-sm text-gray-600 leading-relaxed list-disc">{children}</li>,
+                  strong: ({ children }) => <strong className="font-bold text-gray-900">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-gray-700">{children}</em>,
+                  code: ({ children }) => <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono text-indigo-700">{children}</code>,
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-4 border-violet-300 pl-4 my-3 bg-violet-50 py-2 rounded-r-lg text-sm text-gray-600 italic">
+                      {children}
+                    </blockquote>
+                  ),
+                  hr: () => <hr className="border-gray-100 my-4" />,
+                }}
+              >
+                {text}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-gray-50 flex items-center justify-between">
+          <p className="text-[10px] text-gray-400">
+            Powered by Gemini 1.5 Flash · For educational purposes only · Not financial advice
+          </p>
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 type Tab = "watchlist" | "chart" | "holdings" | "recommendations" | "howto";
@@ -1391,6 +1667,9 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function MarketLensPage() {
+  // ── AI Analyst ───────────────────────────────────────────────────────────
+  const [analyzeSymbol, setAnalyzeSymbol] = useState<string | null>(null);
+
   // ── Watchlist ────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<Tab>("watchlist");
   const [watchlistRows, setWatchlistRows] = useState<RowData[]>(
@@ -1615,8 +1894,13 @@ export default function MarketLensPage() {
 
       {/* ── Content ─────────────────────────────────────────────────────── */}
       <main className="max-w-7xl mx-auto px-6 py-6">
+        {/* AI Ticker Search — always visible */}
+        <div className="mb-5">
+          <TickerSearchBar onAnalyze={setAnalyzeSymbol} />
+        </div>
+
         {activeTab === "watchlist" && (
-          <WatchlistTab rows={watchlistRows} onViewChart={handleViewChart} />
+          <WatchlistTab rows={watchlistRows} onViewChart={handleViewChart} onAnalyze={setAnalyzeSymbol} />
         )}
         {activeTab === "chart" && (
           <ChartTab
@@ -1629,6 +1913,7 @@ export default function MarketLensPage() {
             chartRange={chartRange}
             onRangeChange={setChartRange}
             loading={chartLoading}
+            onAnalyze={setAnalyzeSymbol}
           />
         )}
         {activeTab === "holdings" && (
@@ -1652,6 +1937,11 @@ export default function MarketLensPage() {
           wondr Intelligence Engine · MarketLens · Data proxied via FastAPI from Yahoo Finance · Not financial advice
         </p>
       </footer>
+
+      {/* ── AI Analysis Modal ────────────────────────────────────────────── */}
+      {analyzeSymbol && (
+        <AnalysisModal symbol={analyzeSymbol} onClose={() => setAnalyzeSymbol(null)} />
+      )}
     </div>
   );
 }

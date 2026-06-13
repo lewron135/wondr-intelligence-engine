@@ -13,4 +13,6 @@ export const WATCHLIST: WatchlistEntry[] = [
   { symbol: "VOO", name: "Vanguard S&P 500 ETF", region: "US" },
   { symbol: "SPY", name: "SPDR S&P 500 ETF", region: "US" },
   { symbol: "NVDA", name: "NVIDIA Corporation", region: "US" },
+  { symbol: "IBM", name: "International Business Machines", region: "US" },
+  { symbol: "TSM", name: "Taiwan Semiconductor (ADR)", region: "US" },
 ];

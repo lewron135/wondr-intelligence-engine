@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from database import engine, Base
 
@@ -11,6 +14,7 @@ from models.portfolio import UserPortfolio, PortfolioHolding  # noqa: F401
 from routers import transaction, insight, recommendation, users
 from routers import market
 from routers import portfolio
+from routers import ai_analyst
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,6 +33,7 @@ app.include_router(recommendation.router)
 app.include_router(users.router)
 app.include_router(market.router)
 app.include_router(portfolio.router)
+app.include_router(ai_analyst.router)
 
 @app.get("/")
 def read_root():
